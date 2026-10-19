@@ -1,0 +1,13 @@
+[package]
+name = "athena-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+athena-core = { path = "../athena-core" }
+athena-memory = { path = "../athena-memory" }
+
+[lints]
+workspace = true
+

@@ -1,0 +1,12 @@
+[package]
+name = "athena-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+athena-core = { path = "../athena-core" }
+
+[lints]
+workspace = true
+

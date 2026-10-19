@@ -1,0 +1,17 @@
+[package]
+name = "athena-kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "athena-kernel"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+athena-core = { path = "../crates/athena-core" }
+
+[lints]
+workspace = true
