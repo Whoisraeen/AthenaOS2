@@ -244,12 +244,25 @@ impl SpinalKernel {
             let limit = cfg.max_torque_nm * thermal_factor;
             let step = cfg.max_torque_rate_nm_s * (TICK_US as f32 / 1_000_000.0);
             // Envelope is applied after slew limiting: a new safety limit wins immediately.
-            let torque = raw
+            let mut torque = raw
                 .clamp(
                     self.previous_torque[j] - step,
                     self.previous_torque[j] + step,
                 )
                 .clamp(-limit, limit);
+            // A damping fallback must never retain a voluntary torque that adds
+            // energy. Safety may override the normal torque slew constraint.
+            if mode == ControlMode::AutonomicDamping
+                && (state.velocity_rad_s == 0.0 || torque * state.velocity_rad_s > 0.0)
+            {
+                torque = 0.0;
+            }
+            // Joint-space limits outrank every controller, including withdrawal.
+            if (state.position_rad >= cfg.max_position_rad && torque > 0.0)
+                || (state.position_rad <= cfg.min_position_rad && torque < 0.0)
+            {
+                torque = 0.0;
+            }
             let enabled = state.temperature_c < cfg.cutoff_c;
             output.torque_nm[j] = if enabled { torque } else { 0.0 };
             output.drive_enabled[j] = enabled;

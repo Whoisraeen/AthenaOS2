@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod interrupts;
+
 use athena_core::{
     bus::SensoryBus,
     drive::{self, Drive},
@@ -82,7 +84,7 @@ fn exit(success: bool) -> ! {
         asm!("out dx, eax", in("dx") 0xf4_u16, in("eax") value, options(nomem, nostack));
     }
     loop {
-        // SAFETY: Interrupts remain disabled in this single-core boot exercise.
+        // SAFETY: The kernel is terminating and must not resume normal work.
         unsafe {
             asm!("cli; hlt", options(nomem, nostack));
         }
@@ -94,7 +96,7 @@ extern "C" fn kernel_main() -> ! {
     Serial::init();
     log!("ATHENA / x86-64 spinal kernel / milestone 0");
     log!("boot: long mode, identity paging, static stack, no allocator");
-    log!("clock: logical 250us ticks; real timer/deadline validation pending");
+    log!("clock: PIT IRQ0 at 1193182/298 Hz; end-to-end deadlines unverified");
     let mut bus = SensoryBus::<64>::new();
     let (mut sensors, mut ingress) = bus.split();
     let mut spinal = SpinalKernel::new(BodyConfig::fixture()).unwrap();
@@ -103,8 +105,14 @@ extern "C" fn kernel_main() -> ! {
     let mut watchdog_seen = false;
     let mut recharge_seen = false;
     let mut sleep_seen = false;
+    interrupts::init();
+    let mut hardware_tick = 0;
+    let mut max_gap = 0;
     for tick in 0..1_600_u64 {
-        let now = tick * TICK_US;
+        let next = interrupts::wait_after(hardware_tick);
+        max_gap = max_gap.max(next - hardware_tick);
+        hardware_tick = next;
+        let now = interrupts::micros(hardware_tick);
         body.sampled_at_us = now;
         // No cortex refresh during 220..300ms; the independent spinal loop runs on.
         let intent = if tick % 40 == 0 && !(880..1_200).contains(&tick) {
@@ -168,15 +176,27 @@ extern "C" fn kernel_main() -> ! {
     assert_eq!(withdrawals, 1);
     assert!(watchdog_seen && recharge_seen && sleep_seen);
     // Explicitly prove invalid sensory data cannot put NaN on the actuator boundary.
-    body.sampled_at_us = 400_000;
+    hardware_tick = interrupts::wait_after(hardware_tick);
+    body.sampled_at_us = interrupts::micros(hardware_tick);
     body.joints[0].temperature_c = f32::NAN;
-    let output = spinal.tick(400_000, &body, None, &mut ingress);
+    let output = spinal.tick(body.sampled_at_us, &body, None, &mut ingress);
     assert!(output.faults.any());
     assert!(output.drive_enabled.iter().all(|enabled| !enabled));
     assert!(output.torque_nm.iter().all(|q| *q == 0.0));
     log!("PASS invalid sensor: latched fault, every drive disabled");
+    assert!(hardware_tick >= 1_601);
+    log!(
+        "PASS timer: {} IRQ0 ticks; maximum observed loop gap {} ticks",
+        hardware_tick,
+        max_gap
+    );
     log!("ATHENA_BOOT_OK");
     exit(true)
+}
+
+fn fatal_exception() -> ! {
+    log!("ATHENA_EXCEPTION: fatal CPU exception");
+    exit(false)
 }
 
 #[panic_handler]

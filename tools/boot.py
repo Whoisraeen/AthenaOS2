@@ -55,8 +55,15 @@ def boot(test):
         raise RuntimeError("qemu-system-x86_64 is required (macOS: brew install qemu)")
     command = [qemu, "-machine", "pc", "-accel", "tcg", "-cpu", "qemu64", "-m", "128M",
                "-kernel", str(IMAGE), "-display", "none", "-serial", "stdio", "-monitor", "none",
-               "-no-reboot", "-no-shutdown", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
-    result = subprocess.run(command, cwd=ROOT, capture_output=test, text=True, timeout=30)
+               "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
+    try:
+        result = subprocess.run(command, cwd=ROOT, capture_output=test, text=True, timeout=30)
+    except subprocess.TimeoutExpired as error:
+        if error.stdout:
+            sys.stdout.write(error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout)
+        if error.stderr:
+            sys.stderr.write(error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr)
+        raise RuntimeError("QEMU exceeded the 30-second boot-test timeout") from error
     if test:
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
