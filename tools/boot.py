@@ -12,9 +12,12 @@ ELF = ROOT / "target/x86_64-unknown-none/release/athena-kernel"
 IMAGE = ROOT / "target/athena-x86_64.bin"
 
 
-def build():
-    subprocess.run(["cargo", "build", "--release", "-p", "athena-kernel",
-                    "--target", "x86_64-unknown-none"], cwd=ROOT, check=True)
+def build(fault_probe=False):
+    command = ["cargo", "build", "--release", "-p", "athena-kernel",
+               "--target", "x86_64-unknown-none"]
+    if fault_probe:
+        command.extend(["--features", "fault-probe"])
+    subprocess.run(command, cwd=ROOT, check=True)
     data = ELF.read_bytes()
     if data[:6] != b"\x7fELF\x02\x01":
         raise ValueError("expected a little-endian ELF64 kernel")
@@ -49,7 +52,7 @@ def build():
     print(f"Built {IMAGE.relative_to(ROOT)} ({len(image):,} bytes, memory through 0x{bss_end:x})", flush=True)
 
 
-def boot(test):
+def boot(test, fault_probe=False):
     qemu = shutil.which("qemu-system-x86_64")
     if not qemu:
         raise RuntimeError("qemu-system-x86_64 is required (macOS: brew install qemu)")
@@ -67,20 +70,27 @@ def boot(test):
     if test:
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
-        if "ATHENA_BOOT_OK" not in result.stdout or result.returncode != 33:
+        marker = "ATHENA_EXCEPTION" if fault_probe else "ATHENA_BOOT_OK"
+        expected_exit = 35 if fault_probe else 33
+        if marker not in result.stdout or result.returncode != expected_exit:
             raise RuntimeError(f"kernel boot test failed (QEMU exit {result.returncode})")
-        print("QEMU boot test passed.")
+        print("QEMU exception test passed." if fault_probe else "QEMU boot test passed.")
     elif result.returncode != 33:
         raise RuntimeError(f"kernel boot failed (QEMU exit {result.returncode})")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build", "test", "run"], nargs="?", default="test")
+    parser.add_argument("action", choices=["build", "test", "test-exception", "run"], nargs="?", default="test")
     args = parser.parse_args()
-    build()
+    fault_probe = args.action == "test-exception"
+    build(fault_probe)
     if args.action != "build":
-        boot(args.action == "test")
+        try:
+            boot(args.action.startswith("test"), fault_probe)
+        finally:
+            if fault_probe:
+                build()  # Leave the deliverable image in its normal boot configuration.
 
 
 if __name__ == "__main__":

@@ -20,33 +20,36 @@ pub struct DriveDecision {
 }
 
 pub fn evaluate(body: &BodyFrame, spinal: &MotorOutput) -> DriveDecision {
-    let (drive, urgency) =
-        if spinal.faults.any() || spinal.active_reflex_mask != 0 || !body.is_valid() {
-            (Drive::Protect, 1.0)
-        } else if body.max_temperature_c() >= 70.0 {
-            (
-                Drive::Cool,
-                ((body.max_temperature_c() - 50.0) / 40.0).clamp(0.0, 1.0),
-            )
-        } else if body.battery_soc < 0.3 {
-            (
-                Drive::Recharge,
-                (1.0 - body.battery_soc / 0.3).clamp(0.0, 1.0),
-            )
-        } else if body.docked
-            && body.battery_soc >= 0.5
-            && body.max_temperature_c() < 50.0
-            && body.uncertainty < 0.5
-            && body.task_demand < 0.1
-            && !spinal.watchdog_expired
-        {
-            (Drive::Consolidate, 0.2)
-        } else if body.uncertainty >= 0.7 {
-            (Drive::Observe, body.uncertainty)
-        } else if body.task_demand > 0.1 {
-            (Drive::Task, body.task_demand)
-        } else {
-            (Drive::Explore, 0.25)
-        };
+    let (drive, urgency) = if spinal.faults.any()
+        || spinal.watchdog_expired
+        || spinal.active_reflex_mask != 0
+        || !body.is_valid()
+    {
+        (Drive::Protect, 1.0)
+    } else if body.max_temperature_c() >= 70.0 {
+        (
+            Drive::Cool,
+            ((body.max_temperature_c() - 50.0) / 40.0).clamp(0.0, 1.0),
+        )
+    } else if body.battery_soc < 0.3 {
+        (
+            Drive::Recharge,
+            (1.0 - body.battery_soc / 0.3).clamp(0.0, 1.0),
+        )
+    } else if body.docked
+        && body.battery_soc >= 0.5
+        && body.max_temperature_c() < 50.0
+        && body.uncertainty < 0.5
+        && body.task_demand < 0.1
+        && !spinal.watchdog_expired
+    {
+        (Drive::Consolidate, 0.2)
+    } else if body.uncertainty >= 0.7 {
+        (Drive::Observe, body.uncertainty)
+    } else if body.task_demand > 0.1 {
+        (Drive::Task, body.task_demand)
+    } else {
+        (Drive::Explore, 0.25)
+    };
     DriveDecision { drive, urgency }
 }

@@ -5,6 +5,90 @@ use athena_core::{
 };
 use std::thread;
 
+#[test]
+fn watchdog_damping_does_not_carry_forward_positive_work_from_the_cortex() {
+    for velocity in [0.0, 1.0, -1.0] {
+        let mut bus = SensoryBus::<4>::new();
+        let (_, mut rx) = bus.split();
+        let mut kernel = SpinalKernel::new(BodyConfig::fixture()).unwrap();
+        let intent = MotorIntent {
+            goal: MotorGoal::JointPose([1.0; JOINTS]),
+            ..MotorIntent::hold(1, 0)
+        };
+        for tick in 0..100 {
+            let body = BodyFrame {
+                sampled_at_us: tick * TICK_US,
+                ..BodyFrame::REST
+            };
+            kernel.tick(
+                body.sampled_at_us,
+                &body,
+                (tick == 0).then_some(intent),
+                &mut rx,
+            );
+        }
+        let mut body = BodyFrame {
+            sampled_at_us: WATCHDOG_US,
+            ..BodyFrame::REST
+        };
+        body.joints[0].velocity_rad_s = velocity;
+        let output = kernel.tick(WATCHDOG_US, &body, None, &mut rx);
+        assert!(output.watchdog_expired);
+        assert!(output.torque_nm[0] * velocity <= 0.0);
+        if velocity == 0.0 {
+            assert_eq!(output.torque_nm[0], 0.0);
+        }
+        assert_eq!(drive::evaluate(&body, &output).drive, Drive::Protect);
+    }
+}
+
+#[test]
+fn joint_envelopes_apply_to_the_withdrawal_controller_too() {
+    let mut bus = SensoryBus::<4>::new();
+    let (mut tx, mut rx) = bus.split();
+    let mut kernel = SpinalKernel::new(BodyConfig::fixture()).unwrap();
+    let mut body = BodyFrame::REST;
+    body.joints[0].position_rad = -1.5;
+    body.joints[0].velocity_rad_s = 100.0;
+    tx.send(pain(1, 0)).unwrap();
+    let output = kernel.tick(0, &body, Some(MotorIntent::hold(1, 0)), &mut rx);
+    assert_eq!(output.modes[0], ControlMode::Withdrawal);
+    assert_eq!(output.torque_nm[0], 0.0);
+    assert!(!output.faults.any());
+}
+
+#[test]
+fn fresh_cortical_intents_never_cancel_an_active_reflex() {
+    let mut bus = SensoryBus::<4>::new();
+    let (mut tx, mut rx) = bus.split();
+    let mut kernel = SpinalKernel::new(BodyConfig::fixture()).unwrap();
+    tx.send(pain(1, 0)).unwrap();
+    for tick in 0..800 {
+        let now = tick * TICK_US;
+        let body = BodyFrame {
+            sampled_at_us: now,
+            ..BodyFrame::REST
+        };
+        let output = kernel.tick(
+            now,
+            &body,
+            Some(MotorIntent {
+                goal: MotorGoal::JointPose([1.5; JOINTS]),
+                ..MotorIntent::hold(tick + 1, now)
+            }),
+            &mut rx,
+        );
+        assert_eq!(output.modes[0], ControlMode::Withdrawal);
+        assert!(output.torque_nm[0] < 0.0);
+        assert!(
+            output
+                .torque_nm
+                .iter()
+                .all(|q| q.is_finite() && q.abs() <= 12.0)
+        );
+    }
+}
+
 fn pain(mask: u8, timestamp_us: u64) -> Spike {
     Spike {
         timestamp_us,

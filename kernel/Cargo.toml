@@ -13,5 +13,8 @@ bench = false
 [dependencies]
 athena-core = { path = "../crates/athena-core" }
 
+[features]
+fault-probe = []
+
 [lints]
 workspace = true

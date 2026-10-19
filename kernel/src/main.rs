@@ -106,6 +106,15 @@ extern "C" fn kernel_main() -> ! {
     let mut recharge_seen = false;
     let mut sleep_seen = false;
     interrupts::init();
+    #[cfg(feature = "fault-probe")]
+    {
+        log!("Testing IDT: deliberate breakpoint exception");
+        // SAFETY: This test image deliberately enters the installed fatal handler.
+        unsafe {
+            asm!("int3", options(nomem, nostack));
+        }
+        panic!("breakpoint handler unexpectedly returned");
+    }
     let mut hardware_tick = 0;
     let mut max_gap = 0;
     for tick in 0..1_600_u64 {
